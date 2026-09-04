@@ -2027,13 +2027,20 @@ def detect_project(root):
     if requirements is not None:
         note_file("requirements.txt", requirements)
     py_deps = "\n".join(text for text in (pyproject, requirements) if text).lower()
-    python_runner = "uv run" if os.path.isfile(os.path.join(root, "uv.lock")) else "python3 -m"
+    python_command = "python3"
+    python_module_runner = "python3 -m"
     if os.path.isfile(os.path.join(root, "uv.lock")):
         note_file("uv.lock")
+        python_command = "uv run python"
+        python_module_runner = "uv run"
+    elif os.path.isfile(os.path.join(root, "poetry.lock")):
+        note_file("poetry.lock")
+        python_command = "poetry run python"
+        python_module_runner = "poetry run"
     if os.path.isfile(os.path.join(root, "manage.py")):
         note_file("manage.py")
-        prefix = "uv run python" if python_runner == "uv run" else "python3"
-        add(prefix + " manage.py runserver", "Django 开发服务器", "manage.py", 8000, 20)
+        add(python_command + " manage.py runserver",
+            "Django 开发服务器", "manage.py", 8000, 20)
     else:
         for module_file in ("app.py", "main.py", "server.py"):
             module_text = _read_project_text(root, module_file)
@@ -2048,20 +2055,17 @@ def detect_project(root):
                 r"(?m)^\s*(?:import\s+flask\b|from\s+flask\b)", module_text)
             if "streamlit" in py_deps or imports_streamlit:
                 note_file(module_file, module_text)
-                prefix = "uv run" if python_runner == "uv run" else "python3 -m"
-                add(prefix + " streamlit run " + module_file,
+                add(python_module_runner + " streamlit run " + module_file,
                     "Streamlit 应用", module_file, 8501, 22)
                 break
             if "fastapi" in py_deps or imports_fastapi:
                 note_file(module_file, module_text)
-                prefix = "uv run" if python_runner == "uv run" else "python3 -m"
-                add(prefix + " uvicorn %s:app --reload" % module,
+                add(python_module_runner + " uvicorn %s:app --reload" % module,
                     "FastAPI 开发服务器", module_file, 8000, 23)
                 break
             if "flask" in py_deps or imports_flask:
                 note_file(module_file, module_text)
-                prefix = "uv run" if python_runner == "uv run" else "python3 -m"
-                add(prefix + " flask --app %s run --debug" % module,
+                add(python_module_runner + " flask --app %s run --debug" % module,
                     "Flask 开发服务器", module_file, 5000, 24)
                 break
 

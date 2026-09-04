@@ -306,6 +306,77 @@ class ProjectDetectionTests(unittest.TestCase):
         self.assertEqual(static["candidates"][0]["command"],
                          "python3 -m http.server 8000")
 
+    def test_poetry_lock_uses_poetry_runner_for_django(self):
+        with tempfile.TemporaryDirectory() as td:
+            with open(os.path.join(td, "pyproject.toml"), "w", encoding="utf-8") as f:
+                f.write(
+                    "[tool.poetry]\n"
+                    'name = "demo"\n'
+                    'version = "0.1.0"\n'
+                )
+            with open(os.path.join(td, "poetry.lock"), "w", encoding="utf-8") as f:
+                f.write("")
+            with open(os.path.join(td, "manage.py"), "w", encoding="utf-8") as f:
+                f.write("#!/usr/bin/env python3\n")
+
+            result, error = server.detect_project(td)
+
+        self.assertIsNone(error)
+        self.assertEqual(
+            result["candidates"][0]["command"],
+            "poetry run python manage.py runserver",
+        )
+        self.assertIn("poetry.lock", result["files"])
+
+    def test_poetry_lock_uses_poetry_runner_for_fastapi(self):
+        with tempfile.TemporaryDirectory() as td:
+            with open(os.path.join(td, "pyproject.toml"), "w", encoding="utf-8") as f:
+                f.write(
+                    "[tool.poetry.dependencies]\n"
+                    'python = "^3.12"\n'
+                    'fastapi = "*"\n'
+                    'uvicorn = "*"\n'
+                )
+            with open(os.path.join(td, "poetry.lock"), "w", encoding="utf-8") as f:
+                f.write("")
+            with open(os.path.join(td, "main.py"), "w", encoding="utf-8") as f:
+                f.write("from fastapi import FastAPI\napp = FastAPI()\n")
+
+            result, error = server.detect_project(td)
+
+        self.assertIsNone(error)
+        self.assertEqual(
+            result["candidates"][0]["command"],
+            "poetry run uvicorn main:app --reload",
+        )
+        self.assertEqual(result["candidates"][0]["port"], 8000)
+        self.assertIn("poetry.lock", result["files"])
+
+    def test_uv_lock_keeps_priority_over_poetry_lock(self):
+        with tempfile.TemporaryDirectory() as td:
+            with open(os.path.join(td, "pyproject.toml"), "w", encoding="utf-8") as f:
+                f.write(
+                    "[project]\n"
+                    'name = "demo"\n'
+                    'dependencies = ["fastapi", "uvicorn"]\n'
+                )
+            with open(os.path.join(td, "uv.lock"), "w", encoding="utf-8") as f:
+                f.write("")
+            with open(os.path.join(td, "poetry.lock"), "w", encoding="utf-8") as f:
+                f.write("")
+            with open(os.path.join(td, "main.py"), "w", encoding="utf-8") as f:
+                f.write("from fastapi import FastAPI\napp = FastAPI()\n")
+
+            result, error = server.detect_project(td)
+
+        self.assertIsNone(error)
+        self.assertEqual(
+            result["candidates"][0]["command"],
+            "uv run uvicorn main:app --reload",
+        )
+        self.assertIn("uv.lock", result["files"])
+        self.assertNotIn("poetry.lock", result["files"])
+
     def test_invalid_folder_returns_a_clear_error(self):
         result, error = server.detect_project("/path/that/does/not/exist")
         self.assertIsNone(result)
