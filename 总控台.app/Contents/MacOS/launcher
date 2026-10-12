@@ -3,12 +3,83 @@ set -u
 umask 077
 
 PROJECT_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+# Finder/GUI 不读 shell 配置。按候选顺序找 ≥3.12 的 python3：
+# CONSOLE_PYTHON → Homebrew → mise installs（最高版本）→ mise shims → 系统 PATH。
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:$PATH}"
 
 show_error() {
   /usr/bin/osascript -e 'on run argv' \
     -e 'display alert "总控台" message (item 1 of argv) as critical' \
     -e 'end run' "$1" >/dev/null 2>&1 || true
+}
+
+python_is_ok() {
+  local bin="$1"
+  [ -n "$bin" ] && [ -x "$bin" ] || return 1
+  "$bin" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' 2>/dev/null
+}
+
+# 在 mise installs 里挑版本号最高且 ≥3.12 的 python3。
+pick_mise_install_python() {
+  local root="${MISE_DATA_DIR:-$HOME/.local/share/mise}/installs/python"
+  local best="" best_key="" cand ver key
+  [ -d "$root" ] || return 1
+  for cand in "$root"/*/bin/python3; do
+    [ -x "$cand" ] || continue
+    python_is_ok "$cand" || continue
+    ver="$("$cand" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null)" || continue
+    # 零填充便于字符串比较：3.12.13 → 003.012.013
+    key="$(printf '%s' "$ver" | awk -F. '{printf "%03d.%03d.%03d", $1+0, $2+0, $3+0}')"
+    if [ -z "$best_key" ] || [[ "$key" > "$best_key" ]]; then
+      best="$cand"
+      best_key="$key"
+    fi
+  done
+  [ -n "$best" ] || return 1
+  printf '%s\n' "$best"
+}
+
+pick_python() {
+  local cand
+
+  if [ -n "${CONSOLE_PYTHON:-}" ]; then
+    if python_is_ok "$CONSOLE_PYTHON"; then
+      printf '%s\n' "$CONSOLE_PYTHON"
+      return 0
+    fi
+  fi
+
+  for cand in \
+    /opt/homebrew/bin/python3.13 \
+    /opt/homebrew/bin/python3.12 \
+    /opt/homebrew/bin/python3 \
+    /usr/local/bin/python3.13 \
+    /usr/local/bin/python3.12 \
+    /usr/local/bin/python3
+  do
+    if python_is_ok "$cand"; then
+      printf '%s\n' "$cand"
+      return 0
+    fi
+  done
+
+  if cand="$(pick_mise_install_python)"; then
+    printf '%s\n' "$cand"
+    return 0
+  fi
+
+  for cand in \
+    "${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims/python3" \
+    "$(command -v python3 2>/dev/null || true)"
+  do
+    if python_is_ok "$cand"; then
+      printf '%s\n' "$cand"
+      return 0
+    fi
+  done
+
+  return 1
 }
 
 if [ ! -f "$PROJECT_DIR/server.py" ]; then
@@ -19,13 +90,14 @@ cd "$PROJECT_DIR" || {
   show_error "无法进入总控台所在目录。"
   exit 1
 }
-PYTHON_BIN="$(command -v python3)"
-if [ -z "$PYTHON_BIN" ]; then
-  show_error "未找到 Python 3。请安装 Python 3.12 或更高版本后重试。"
-  exit 127
-fi
-if ! "$PYTHON_BIN" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)'; then
-  show_error "Python 版本过低。总控台需要 Python 3.12 或更高版本。"
+
+PYTHON_BIN="$(pick_python || true)"
+if [ -z "${PYTHON_BIN:-}" ]; then
+  if ! command -v python3 >/dev/null 2>&1; then
+    show_error "未找到 Python 3。请安装 Python 3.12 或更高版本后重试。也可设置环境变量 CONSOLE_PYTHON 指向解释器。"
+    exit 127
+  fi
+  show_error "Python 版本过低。总控台需要 Python 3.12 或更高版本。也可设置环境变量 CONSOLE_PYTHON 指向合格解释器。"
   exit 126
 fi
 
